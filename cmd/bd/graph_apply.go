@@ -586,7 +586,9 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 		if err := validateGraphApplyPlannedParentBlockingPaths(ctx, tx, plan, keyToID, parentDepPairs); err != nil {
 			return err
 		}
-		canSkipLocalCycleChecks := graphApplyPlanCanSkipSQLCycleChecks(plan)
+		if err := validateGraphApplyPlannedBlockingCycles(ctx, tx, plan, keyToID); err != nil {
+			return err
+		}
 
 		// Add dependencies from edges.
 		for i, edge := range plan.Edges {
@@ -608,7 +610,7 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 				Type:        depType,
 			}
 			addOpts := storage.DependencyAddOptions{}
-			if canSkipLocalCycleChecks && graphApplyEdgeCanSkipSQLCycleCheck(edge, depType) {
+			if graphApplyCycleRelevantDependencyType(depType) {
 				addOpts.SkipCycleCheck = true
 			}
 			if err := tx.AddDependencyWithOptions(ctx, dep, actor, addOpts); err != nil {
@@ -650,6 +652,45 @@ func executeGraphApply(ctx context.Context, plan *GraphApplyPlan, opts GraphAppl
 	}
 
 	return &GraphApplyResult{IDs: keyToID}, nil
+}
+
+func validateGraphApplyPlannedBlockingCycles(ctx context.Context, tx storage.Transaction, plan *GraphApplyPlan, keyToID map[string]string) error {
+	type plannedEdge struct {
+		index  int
+		fromID string
+		toID   string
+	}
+
+	adj := make(map[string][]string)
+	checks := make([]plannedEdge, 0, len(plan.Edges))
+	for i, edge := range plan.Edges {
+		depType := graphApplyDependencyType(edge.Type)
+		if !graphApplyCycleRelevantDependencyType(depType) {
+			continue
+		}
+		fromID := resolveEdgeRef(edge.FromKey, edge.FromID, keyToID)
+		toID := resolveEdgeRef(edge.ToKey, edge.ToID, keyToID)
+		if fromID == "" || toID == "" {
+			continue
+		}
+		if fromID == toID {
+			return fmt.Errorf("edge %d %s->%s creates a blocking dependency cycle", i, fromID, toID)
+		}
+		adj[fromID] = append(adj[fromID], toID)
+		checks = append(checks, plannedEdge{index: i, fromID: fromID, toID: toID})
+	}
+
+	depCache := make(map[string][]*types.Dependency)
+	for _, edge := range checks {
+		hasPath, err := graphApplyHasPath(ctx, tx, adj, depCache, edge.toID, edge.fromID)
+		if err != nil {
+			return fmt.Errorf("edge %d %s->%s: checking planned blocking cycle: %w", edge.index, edge.fromID, edge.toID, err)
+		}
+		if hasPath {
+			return fmt.Errorf("edge %d %s->%s creates a blocking dependency cycle", edge.index, edge.fromID, edge.toID)
+		}
+	}
+	return nil
 }
 
 func validateGraphApplyPlannedParentBlockingPaths(ctx context.Context, tx storage.Transaction, plan *GraphApplyPlan, keyToID map[string]string, parentDepPairs map[string]bool) error {

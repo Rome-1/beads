@@ -12,9 +12,10 @@ import (
 
 type graphApplyFakeStore struct {
 	storage.DoltStorage
-	issues map[string]*types.Issue
-	deps   []*types.Dependency
-	nextID int
+	issues  map[string]*types.Issue
+	deps    []*types.Dependency
+	addOpts []storage.DependencyAddOptions
+	nextID  int
 }
 
 func newGraphApplyFakeStore() *graphApplyFakeStore {
@@ -81,15 +82,17 @@ func (s *graphApplyFakeStore) RunInTransaction(ctx context.Context, _ string, fn
 	}
 	s.issues = txStore.issues
 	s.deps = txStore.deps
+	s.addOpts = txStore.addOpts
 	s.nextID = txStore.nextID
 	return nil
 }
 
 func (s *graphApplyFakeStore) clone() *graphApplyFakeStore {
 	cp := &graphApplyFakeStore{
-		issues: make(map[string]*types.Issue, len(s.issues)),
-		deps:   make([]*types.Dependency, 0, len(s.deps)),
-		nextID: s.nextID,
+		issues:  make(map[string]*types.Issue, len(s.issues)),
+		deps:    make([]*types.Dependency, 0, len(s.deps)),
+		addOpts: append([]storage.DependencyAddOptions(nil), s.addOpts...),
+		nextID:  s.nextID,
 	}
 	for id, issue := range s.issues {
 		issueCopy := *issue
@@ -129,6 +132,7 @@ func (tx *graphApplyFakeTx) AddDependency(ctx context.Context, dep *types.Depend
 }
 
 func (tx *graphApplyFakeTx) AddDependencyWithOptions(_ context.Context, dep *types.Dependency, _ string, opts storage.DependencyAddOptions) error {
+	tx.store.addOpts = append(tx.store.addOpts, opts)
 	for _, existing := range tx.store.deps {
 		if existing.IssueID == dep.IssueID && existing.DependsOnID == dep.DependsOnID {
 			if existing.Type == dep.Type {
@@ -237,6 +241,43 @@ func TestExecuteGraphApplyUnitRejectsMixedLocalExternalBlockingCycle(t *testing.
 	}
 	if !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("error = %q, want cycle rejection", err.Error())
+	}
+}
+
+func TestExecuteGraphApplyUnitSkipsSQLCycleChecksAfterGraphPreflight(t *testing.T) {
+	ctx, fakeStore := withGraphApplyFakeStore(t)
+	if err := fakeStore.CreateIssue(ctx, &types.Issue{
+		ID:        "ga-existing",
+		Title:     "Existing",
+		Status:    types.StatusOpen,
+		Priority:  2,
+		IssueType: types.TypeTask,
+	}, actor); err != nil {
+		t.Fatalf("CreateIssue(existing): %v", err)
+	}
+
+	plan := &GraphApplyPlan{
+		Nodes: []GraphApplyNode{
+			{Key: "a", Title: "A", Type: "task"},
+			{Key: "b", Title: "B", Type: "task"},
+		},
+		Edges: []GraphApplyEdge{
+			{FromID: "ga-existing", ToKey: "a", Type: "blocks"},
+			{FromKey: "a", ToKey: "b", Type: "blocks"},
+			{FromKey: "b", ToID: "external:other:shipped", Type: "blocks"},
+		},
+	}
+
+	if _, err := executeGraphApply(ctx, plan, GraphApplyOptions{}); err != nil {
+		t.Fatalf("executeGraphApply: %v", err)
+	}
+	if len(fakeStore.addOpts) != len(plan.Edges) {
+		t.Fatalf("AddDependencyWithOptions calls = %d, want %d", len(fakeStore.addOpts), len(plan.Edges))
+	}
+	for i, opts := range fakeStore.addOpts {
+		if !opts.SkipCycleCheck {
+			t.Fatalf("edge %d SkipCycleCheck = false, want true", i)
+		}
 	}
 }
 
