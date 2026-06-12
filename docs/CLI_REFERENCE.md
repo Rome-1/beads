@@ -1780,7 +1780,7 @@ bd dep [issue-id] [flags]
 
 ```
   -b, --blocks string    Issue ID that this issue blocks (shorthand for: bd dep add <blocked> <blocker>)
-      --no-cycle-check   Skip cycle detection after adding (use for bulk wiring — run 'bd dep cycles' to verify afterwards)
+      --no-cycle-check   Skip per-edge cycle checks for speed (bulk wiring); bulk --file adds still run one final whole-graph check before commit
 ```
 
 #### bd dep add
@@ -1825,7 +1825,7 @@ bd dep add [issue-id] [depends-on-id] [flags]
       --blocked-by string   Issue ID that blocks the first issue (alternative to positional arg)
       --depends-on string   Issue ID that the first issue depends on (alias for --blocked-by)
       --file string         Read dependency edges from JSONL file, or '-' for stdin
-      --no-cycle-check      Skip cycle detection after adding (use for bulk wiring — run 'bd dep cycles' to verify afterwards)
+      --no-cycle-check      Skip per-edge cycle checks for speed (bulk wiring); bulk --file adds still run one final whole-graph check before commit
   -t, --type string         Dependency type (blocks|tracks|related|parent-child|discovered-from|until|caused-by|validates|relates-to|supersedes) (default "blocks")
 ```
 
@@ -2427,6 +2427,14 @@ Timestamps (created_at, updated_at, started_at, closed_at) are preserved
 when present in the JSONL and otherwise filled in by the importer. The
 legacy "wisp" boolean is accepted as an alias for "ephemeral".
 
+By default rows whose updated_at is older than the local issue's are
+skipped (reported as stale_skipped_ids), so a routine import never rolls
+issues back. The guard is also enforced inside the upsert itself, so a
+local update that lands while the import is running is preserved rather
+than overwritten. To deliberately restore an older snapshot, pass
+--allow-stale, which imports every row even when it overwrites newer
+local state.
+
 EXAMPLES:
   bd import                        # Import from configured import.path
   bd import backup.jsonl           # Import from a specific file
@@ -2435,6 +2443,7 @@ EXAMPLES:
   cat issues.jsonl | bd import -   # Pipe JSONL from another tool
   bd import --dry-run              # Show what would be imported
   bd import --dedup                # Skip issues with duplicate titles
+  bd import --allow-stale old.jsonl # Restore an older snapshot (overwrites newer local rows)
   bd import --json                 # Structured output with created and skipped IDs
 
 ```
@@ -2444,6 +2453,7 @@ bd import [file|-] [flags]
 **Flags:**
 
 ```
+      --allow-stale    Import rows even when older than the local issue (required to restore an older snapshot)
       --dedup          Skip lines whose title matches an existing open issue
       --dry-run        Show what would be imported without importing
   -i, --input string   Read JSONL from a specific file

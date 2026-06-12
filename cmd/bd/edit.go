@@ -32,7 +32,7 @@ Examples:
 		ctx := rootCtx
 
 		// Resolve ID with prefix routing (supports cross-rig edits like `bd edit xe-5ls`)
-		result, err := resolveAndGetIssueWithRouting(ctx, store, id)
+		result, err := resolveAndGetIssueForMutation(ctx, store, id)
 		if err != nil {
 			FatalErrorRespectJSON("resolving %s: %v", id, err)
 		}

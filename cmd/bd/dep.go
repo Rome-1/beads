@@ -37,6 +37,21 @@ func resolveIDWithRouting(ctx context.Context, localStore storage.DoltStorage, i
 	return result.ResolvedID, s, func() { result.Close() }, nil
 }
 
+func resolveIDForMutation(ctx context.Context, localStore storage.DoltStorage, id string) (resolvedID string, targetStore storage.DoltStorage, cleanup func(), err error) {
+	result, err := resolveAndGetIssueForMutation(ctx, localStore, id)
+	if err != nil {
+		return "", nil, func() {}, fmt.Errorf("resolving issue ID %s: %w", id, err)
+	}
+	if result == nil || result.Issue == nil {
+		return "", nil, func() {}, fmt.Errorf("no issue found matching %q", id)
+	}
+	s := result.Store
+	if s == nil {
+		s = localStore
+	}
+	return result.ResolvedID, s, func() { result.Close() }, nil
+}
+
 // isChildOf returns true if childID is a hierarchical child of parentID.
 // For example, "bd-abc.1" is a child of "bd-abc", and "bd-abc.1.2" is a child of "bd-abc.1".
 func isChildOf(childID, parentID string) bool {
@@ -124,13 +139,13 @@ Examples:
 			depType := "blocks"
 
 			// Resolve partial IDs with routing support
-			fromID, fromStore, fromCleanup, err := resolveIDWithRouting(ctx, store, blocksID)
+			fromID, fromStore, fromCleanup, err := resolveIDForMutation(ctx, store, blocksID)
 			if err != nil {
 				FatalErrorRespectJSON("%v", err)
 			}
 			defer fromCleanup()
 
-			toID, _, toCleanup, err := resolveIDWithRouting(ctx, store, blockerID)
+			toID, _, toCleanup, err := resolveIDForMutation(ctx, store, blockerID)
 			if err != nil {
 				FatalErrorRespectJSON("%v", err)
 			}
@@ -280,7 +295,7 @@ Examples:
 		// Check if toID is an external reference (don't resolve it)
 		isExternalRef := strings.HasPrefix(dependsOnArg, "external:")
 
-		fromID, fromStore, fromCleanup, err := resolveIDWithRouting(ctx, store, args[0])
+		fromID, fromStore, fromCleanup, err := resolveIDForMutation(ctx, store, args[0])
 		if err != nil {
 			FatalErrorRespectJSON("%v", err)
 		}
@@ -295,7 +310,7 @@ Examples:
 			}
 		} else {
 			var toCleanup func()
-			toID, _, toCleanup, err = resolveIDWithRouting(ctx, store, dependsOnArg)
+			toID, _, toCleanup, err = resolveIDForMutation(ctx, store, dependsOnArg)
 			if err != nil {
 				// Cross-prefix deps: if the target has a different prefix than
 				// the source, skip resolution and pass the raw ID through.
@@ -571,7 +586,7 @@ func validateBulkDepEdges(ctx context.Context, edges []bulkDepEdge) ([]bulkDepEd
 
 	for _, edge := range edges {
 		current := edge
-		fromID, fromStore, fromCleanup, err := resolveIDWithRouting(ctx, store, edge.IssueID)
+		fromID, fromStore, fromCleanup, err := resolveIDForMutation(ctx, store, edge.IssueID)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("line %d: resolving issue ID %s: %v", edge.Line, edge.IssueID, err))
 			continue
@@ -589,7 +604,7 @@ func validateBulkDepEdges(ctx context.Context, edges []bulkDepEdge) ([]bulkDepEd
 			}
 			current.DependsOnID = edge.DependsOnID
 		} else {
-			toID, _, toCleanup, err := resolveIDWithRouting(ctx, store, edge.DependsOnID)
+			toID, _, toCleanup, err := resolveIDForMutation(ctx, store, edge.DependsOnID)
 			if err != nil {
 				srcPrefix := types.ExtractPrefix(current.IssueID)
 				tgtPrefix := types.ExtractPrefix(edge.DependsOnID)
@@ -861,7 +876,7 @@ var depRemoveCmd = &cobra.Command{
 
 		// Resolve partial IDs with routing support
 		var fromID, toID string
-		fromID, fromStore, fromCleanup, err := resolveIDWithRouting(ctx, store, args[0])
+		fromID, fromStore, fromCleanup, err := resolveIDForMutation(ctx, store, args[0])
 		if err != nil {
 			FatalErrorRespectJSON("%v", err)
 		}
@@ -877,7 +892,7 @@ var depRemoveCmd = &cobra.Command{
 			}
 		} else {
 			var toCleanup func()
-			toID, _, toCleanup, err = resolveIDWithRouting(ctx, store, args[1])
+			toID, _, toCleanup, err = resolveIDForMutation(ctx, store, args[1])
 			if err != nil {
 				// Cross-prefix deps: if the target has a different prefix than
 				// the source, skip resolution and pass the raw ID through.

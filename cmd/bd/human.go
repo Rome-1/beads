@@ -192,7 +192,7 @@ Examples:
 		issueID := args[0]
 
 		// Resolve partial ID and get issue
-		result, err := resolveAndGetIssueWithRouting(ctx, store, issueID)
+		result, err := resolveAndGetIssueForMutation(ctx, store, issueID)
 		if err != nil {
 			FatalErrorRespectJSON("resolving issue ID %s: %v", issueID, err)
 		}
@@ -264,7 +264,7 @@ Examples:
 		issueID := args[0]
 
 		// Resolve partial ID and get issue
-		result, err := resolveAndGetIssueWithRouting(ctx, store, issueID)
+		result, err := resolveAndGetIssueForMutation(ctx, store, issueID)
 		if err != nil {
 			FatalErrorRespectJSON("resolving issue ID %s: %v", issueID, err)
 		}

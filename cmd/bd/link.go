@@ -32,13 +32,13 @@ Examples:
 		ctx := rootCtx
 
 		// Resolve partial IDs with routing support
-		fromID, fromStore, fromCleanup, err := resolveIDWithRouting(ctx, store, id1)
+		fromID, fromStore, fromCleanup, err := resolveIDForMutation(ctx, store, id1)
 		if err != nil {
 			FatalErrorRespectJSON("%v", err)
 		}
 		defer fromCleanup()
 
-		toID, _, toCleanup, err := resolveIDWithRouting(ctx, store, id2)
+		toID, _, toCleanup, err := resolveIDForMutation(ctx, store, id2)
 		if err != nil {
 			FatalErrorRespectJSON("%v", err)
 		}

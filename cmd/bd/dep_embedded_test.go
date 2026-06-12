@@ -79,6 +79,20 @@ func bdDepWithInput(t *testing.T, bd, dir, input string, args ...string) string 
 	return stdout.String()
 }
 
+func bdDepWithInputFail(t *testing.T, bd, dir, input string, args ...string) string {
+	t.Helper()
+	fullArgs := append([]string{"dep"}, args...)
+	cmd := exec.Command(bd, fullArgs...)
+	cmd.Dir = dir
+	cmd.Env = bdEnv(dir)
+	cmd.Stdin = strings.NewReader(input)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected bd dep %s to fail, but succeeded:\n%s", strings.Join(args, " "), out)
+	}
+	return string(out)
+}
+
 func TestEmbeddedDep(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
@@ -523,7 +537,7 @@ func TestEmbeddedDepNoCycleCheck(t *testing.T) {
 	bdDep(t, bd, dir, extra.ID, "--blocks", ids[n-1], "--no-cycle-check")
 }
 
-func TestEmbeddedDepBulkNoCycleCheckSkipsPerEdgeCycleValidation(t *testing.T) {
+func TestEmbeddedDepBulkNoCycleCheckRunsFinalGraphValidation(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
 	}
@@ -536,13 +550,13 @@ func TestEmbeddedDepBulkNoCycleCheckSkipsPerEdgeCycleValidation(t *testing.T) {
 	b := bdCreate(t, bd, dir, "Bulk cycle B", "--type", "task")
 	input := fmt.Sprintf("{\"from\":%q,\"to\":%q}\n{\"from\":%q,\"to\":%q}\n", a.ID, b.ID, b.ID, a.ID)
 
-	out := bdDepWithInput(t, bd, dir, input, "add", "--file", "-", "--no-cycle-check")
-	if !strings.Contains(out, "Added 2 dependencies") {
-		t.Fatalf("expected bulk add summary, got: %s", out)
+	out := bdDepWithInputFail(t, bd, dir, input, "add", "--file", "-", "--no-cycle-check")
+	if !strings.Contains(out, "dependency cycle would be created") {
+		t.Fatalf("expected final graph cycle rejection, got: %s", out)
 	}
 
 	cycles := bdDep(t, bd, dir, "cycles")
-	if !strings.Contains(cycles, "Found") {
-		t.Fatalf("expected skipped cycle validation to leave detectable cycle, got: %s", cycles)
+	if !strings.Contains(cycles, "No dependency cycles detected") {
+		t.Fatalf("expected rejected bulk cycle to leave graph clean, got: %s", cycles)
 	}
 }

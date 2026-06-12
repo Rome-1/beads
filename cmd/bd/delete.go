@@ -89,7 +89,7 @@ Force: Delete and orphan dependents
 		issueID := issueIDs[0]
 		ctx := rootCtx
 		// Get the issue to be deleted, using prefix-based routing
-		routedResult, err := resolveAndGetIssueWithRouting(ctx, store, issueID)
+		routedResult, err := resolveAndGetIssueForMutation(ctx, store, issueID)
 		if err != nil {
 			if isNotFoundErr(err) {
 				FatalError("issue %s not found", issueID)
@@ -252,7 +252,7 @@ func deleteBatch(_ *cobra.Command, issueIDs []string, force bool, dryRun bool, c
 	notFound := []string{}
 	var routedStore storage.DoltStorage
 	for _, id := range issueIDs {
-		result, err := resolveAndGetIssueWithRouting(ctx, store, id)
+		result, err := resolveAndGetIssueForMutation(ctx, store, id)
 		if err != nil {
 			if isNotFoundErr(err) {
 				notFound = append(notFound, id)

@@ -53,6 +53,17 @@ func (r *RoutedResult) Close() {
 // Returns a RoutedResult containing the issue, resolved ID, and the store to use.
 // The caller MUST call result.Close() when done to release any routed storage.
 func resolveAndGetIssueWithRouting(ctx context.Context, localStore storage.DoltStorage, id string) (*RoutedResult, error) {
+	return resolveAndGetIssueWithRoutingAccess(ctx, localStore, id, false)
+}
+
+// resolveAndGetIssueForMutation resolves an issue like
+// resolveAndGetIssueWithRouting, but opens prefix-routed target stores in
+// writable mode so mutation commands can commit to the routed repository.
+func resolveAndGetIssueForMutation(ctx context.Context, localStore storage.DoltStorage, id string) (*RoutedResult, error) {
+	return resolveAndGetIssueWithRoutingAccess(ctx, localStore, id, true)
+}
+
+func resolveAndGetIssueWithRoutingAccess(ctx context.Context, localStore storage.DoltStorage, id string, writablePrefixRoute bool) (*RoutedResult, error) {
 	// Try local store first.
 	result, err := resolveAndGetFromStore(ctx, localStore, id, false)
 	if err == nil {
@@ -63,7 +74,7 @@ func resolveAndGetIssueWithRouting(ctx context.Context, localStore storage.DoltS
 	// This handles cross-rig lookups where the ID's prefix maps to a different
 	// database (e.g., hr-8wn.1 routes to the herald rig's database).
 	if isNotFoundErr(err) {
-		if prefixResult, prefixErr := resolveViaPrefixRouting(ctx, id); prefixErr == nil {
+		if prefixResult, prefixErr := resolveViaPrefixRoutingWithAccess(ctx, id, writablePrefixRoute); prefixErr == nil {
 			return prefixResult, nil
 		}
 	}
@@ -132,6 +143,10 @@ type prefixRoute struct {
 // can be resolved by following the "hr-" route to the herald rig's .beads directory,
 // which declares dolt_database="herald".
 func resolveViaPrefixRouting(ctx context.Context, id string) (*RoutedResult, error) {
+	return resolveViaPrefixRoutingWithAccess(ctx, id, false)
+}
+
+func resolveViaPrefixRoutingWithAccess(ctx context.Context, id string, writable bool) (*RoutedResult, error) {
 	// Extract prefix from the bead ID (e.g., "hr-" from "hr-8wn.1")
 	prefix := extractBeadPrefix(id)
 	if prefix == "" {
@@ -183,20 +198,25 @@ func resolveViaPrefixRouting(ctx context.Context, id string) (*RoutedResult, err
 
 	debug.Logf("[routing] Prefix %q matched route to %s (database: %s)\n", prefix, matchedRoute.Path, targetDB)
 
-	// Open a read-only store for the target database.
-	// We need to temporarily override BEADS_DOLT_SERVER_DATABASE so the store
-	// connects to the correct database on the shared Dolt server.
+	// We need to temporarily override BEADS_DOLT_SERVER_DATABASE so server-mode
+	// stores connect to the correct database on the shared Dolt server.
 	origDB := os.Getenv("BEADS_DOLT_SERVER_DATABASE")
 	_ = os.Setenv("BEADS_DOLT_SERVER_DATABASE", targetDB)
-	targetStore, err := newReadOnlyStoreFromConfig(ctx, targetBeadsDir)
+	var targetStore storage.DoltStorage
+	var openErr error
+	if writable {
+		targetStore, openErr = newDoltStoreFromConfig(ctx, targetBeadsDir)
+	} else {
+		targetStore, openErr = newReadOnlyStoreFromConfig(ctx, targetBeadsDir)
+	}
 	// Restore the original env var
 	if origDB != "" {
 		_ = os.Setenv("BEADS_DOLT_SERVER_DATABASE", origDB)
 	} else {
 		_ = os.Unsetenv("BEADS_DOLT_SERVER_DATABASE")
 	}
-	if err != nil {
-		return nil, fmt.Errorf("opening routed store for %s: %w", matchedRoute.Path, err)
+	if openErr != nil {
+		return nil, fmt.Errorf("opening routed store for %s: %w", matchedRoute.Path, openErr)
 	}
 
 	result, err := resolveAndGetFromStore(ctx, targetStore, id, true)
