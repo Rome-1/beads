@@ -404,7 +404,7 @@ func MigrateUp(ctx context.Context, db DBConn) (int, error) {
 	if !staged {
 		return applied, nil
 	}
-	if _, err := db.ExecContext(ctx, "CALL DOLT_COMMIT('-m', 'schema: apply migrations')"); err != nil {
+	if err := drainCall(ctx, db, "CALL DOLT_COMMIT('-m', 'schema: apply migrations')"); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "nothing to commit") {
 			return applied, fmt.Errorf("committing migrations: %w", err)
 		}
@@ -527,7 +527,7 @@ func unstagePreExistingTables(ctx context.Context, db DBConn, tables map[string]
 		log.Printf("schema migration unstaging pre-existing staged tables: %s", strings.Join(staged, ", "))
 	}
 	for _, table := range staged {
-		if _, err := db.ExecContext(ctx, "CALL DOLT_RESET(?)", table); err != nil {
+		if err := drainCall(ctx, db, "CALL DOLT_RESET(?)", table); err != nil {
 			return fmt.Errorf("dolt reset %s: %w", table, err)
 		}
 	}
@@ -697,7 +697,7 @@ func stageSchemaTables(ctx context.Context, db DBConn, dirtyBefore map[string]di
 	sort.Strings(tables)
 
 	for _, table := range tables {
-		if _, err := db.ExecContext(ctx, "CALL DOLT_ADD('-f', ?)", table); err != nil {
+		if err := drainCall(ctx, db, "CALL DOLT_ADD('-f', ?)", table); err != nil {
 			return false, fmt.Errorf("dolt add %s: %w", table, err)
 		}
 	}
@@ -1016,6 +1016,63 @@ func migrationSQLTouchesTable(sqlText, table string) bool {
 	return false
 }
 
+// procedureCallRe matches a stored-procedure invocation (CALL ...) at a
+// statement boundary, case-insensitively. It decides whether a migration body
+// must have its result sets drained explicitly (see execMigrationBody).
+var procedureCallRe = regexp.MustCompile(`(?i)(?:^|;|\n)\s*CALL\s`)
+
+// drainCall runs a statement (or multi-statement body) that invokes a Dolt
+// stored procedure and fully consumes EVERY result set it returns, leaving the
+// pinned migration connection clean for the next command.
+//
+// Why this matters: a CALL DOLT_* invocation (DOLT_COMMIT, DOLT_RESET,
+// DOLT_ADD) returns one result set per call. ExecContext relies on the MySQL
+// driver's internal multi-result discard to consume them. Over a shared Dolt
+// sql-server under concurrent init load that discard has been observed to leave
+// the connection holding an unconsumed proc result set, so the NEXT command on
+// the same pinned conn — the version-record INSERT, a later DOLT_ADD, or
+// RELEASE_LOCK — fails on the still-busy connection ("busy buffer" ->
+// "driver: bad connection").
+//
+// This is the necessary half of the fix, not the sufficient half: a
+// load-induced transient (or a "nothing to commit" from a no-op commit) can
+// still surface mid-migration, and the init retry loop then re-runs the whole
+// migration. The frozen non-idempotent migrations (0040 bare-INSERTs its
+// dolt_nonlocal_tables rows, 0041 DELETEs then commits them) are made
+// replay-safe by pre-migration repairs keyed to their version, not by editing
+// their shipped SQL — see preMigrationRepair and migration_repairs.go.
+func drainCall(ctx context.Context, db DBConn, query string, args ...any) error {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for {
+		// Consume every row of the current result set. The values are
+		// irrelevant — a CALL's effect comes from its side effects, not from
+		// anything it returns — but reading them is what frees the connection
+		// buffer for the next command.
+		for rows.Next() { //nolint:revive // intentional drain, no body needed
+		}
+		if !rows.NextResultSet() {
+			break
+		}
+	}
+	return rows.Err()
+}
+
+// execMigrationBody applies one migration file's SQL on the pinned migration
+// connection. Bodies that invoke a stored procedure (today 0040 and 0041, both
+// CALL DOLT_COMMIT) are routed through drainCall so their result sets are
+// consumed; all other migrations keep the unchanged ExecContext path.
+func execMigrationBody(ctx context.Context, db DBConn, sqlText string) error {
+	if !procedureCallRe.MatchString(sqlText) {
+		_, err := db.ExecContext(ctx, sqlText)
+		return err
+	}
+	return drainCall(ctx, db, sqlText)
+}
+
 // migrate brings the source up to its latest version and returns the number of
 // numbered migrations applied plus whether it added the content_hash column to a
 // pre-existing cursor table. The column signal lets MigrateUp stage and commit
@@ -1058,7 +1115,7 @@ func (m migrationSource) migrate(ctx context.Context, db DBConn, upTo int) (int,
 		if err := m.preMigrationRepair(ctx, db, mf.version); err != nil {
 			return count, columnAdded, fmt.Errorf("pre-repair for migration %s: %w", mf.name, err)
 		}
-		if _, err := db.ExecContext(ctx, string(data)); err != nil {
+		if err := execMigrationBody(ctx, db, string(data)); err != nil {
 			return count, columnAdded, fmt.Errorf("migration %s: %w", mf.name, err)
 		}
 		sum := sha256.Sum256(data)

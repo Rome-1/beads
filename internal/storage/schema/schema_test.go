@@ -974,9 +974,9 @@ func TestStageSchemaTablesSkipsIgnoredTables(t *testing.T) {
 	mock.ExpectQuery(`(?s)SELECT t\.TABLE_NAME\s+FROM INFORMATION_SCHEMA\.TABLES t\s+WHERE .*NOT EXISTS`).
 		WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME"}).
 			AddRow("schema_migrations"))
-	mock.ExpectExec(`CALL DOLT_ADD\('-f', \?\)`).
+	mock.ExpectQuery(`CALL DOLT_ADD\('-f', \?\)`).
 		WithArgs("schema_migrations").
-		WillReturnResult(sqlmock.NewResult(0, 1))
+		WillReturnRows(sqlmock.NewRows([]string{"status"}))
 
 	staged, err := stageSchemaTables(context.Background(), db, map[string]dirtyTableState{})
 	if err != nil {
@@ -1002,12 +1002,12 @@ func TestUnstageIgnoredTablesResetsExistingIgnoredTables(t *testing.T) {
 			AddRow("ignored_schema_migrations", true).
 			AddRow("wisp_dependencies", true).
 			AddRow("wisps", false))
-	mock.ExpectExec(`CALL DOLT_RESET\(\?\)`).
+	mock.ExpectQuery(`CALL DOLT_RESET\(\?\)`).
 		WithArgs("ignored_schema_migrations").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`CALL DOLT_RESET\(\?\)`).
+		WillReturnRows(sqlmock.NewRows([]string{"status"}))
+	mock.ExpectQuery(`CALL DOLT_RESET\(\?\)`).
 		WithArgs("wisp_dependencies").
-		WillReturnResult(sqlmock.NewResult(0, 1))
+		WillReturnRows(sqlmock.NewRows([]string{"status"}))
 
 	if err := unstageIgnoredTables(context.Background(), db); err != nil {
 		t.Fatalf("unstageIgnoredTables: %v", err)
