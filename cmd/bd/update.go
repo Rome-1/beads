@@ -998,7 +998,11 @@ func init() {
 	// Additive rather than a rename: --add-label keeps working unchanged.
 	// -l maps to ADD (not set) because add is the non-destructive reading and
 	// matches what `create -l` does on a new issue.
-	updateCmd.Flags().StringSliceP("add-label", "l", nil, "Add labels (repeatable); -l matches `bd create -l`")
+	//
+	// No backquotes in the usage string: pflag reads the first backquoted span
+	// as the flag's ARGUMENT NAME, so "`bd create -l`" here renders the flag as
+	// "-l, --add-label bd create -l" in `bd update --help` instead of "strings".
+	updateCmd.Flags().StringSliceP("add-label", "l", nil, "Add labels (repeatable); -l matches bd create -l")
 	updateCmd.Flags().StringSlice("remove-label", nil, "Remove labels (repeatable)")
 	updateCmd.Flags().StringSlice("set-labels", nil, "Set labels, replacing all existing (repeatable)")
 	updateCmd.Flags().String("parent", "", "New parent issue ID (reparents the issue, use empty string to remove parent)")
