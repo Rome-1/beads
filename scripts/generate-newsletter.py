@@ -183,7 +183,12 @@ def get_commits_since(since_date: datetime) -> list[dict]:
         capture_output=True,
         text=True
     )
-    
+    if result.returncode != 0:
+        raise RuntimeError(
+            "git log failed (--since-as-filter needs git >= 2.37): "
+            f"{result.stderr.strip()}"
+        )
+
     commits = []
     for line in result.stdout.strip().split('\n'):
         if line:
