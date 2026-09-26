@@ -12,6 +12,11 @@
 """
 Generate a weekly Beads newsletter based on changelog, commits, and changes.
 
+Requirements:
+    git >= 2.37     - get_commits_since() passes --since-as-filter to git log
+                      (added in git 2.37, 2022-06).  On older git the script
+                      raises rather than silently reporting an empty range.
+
 Usage:
     python generate-newsletter.py
     python generate-newsletter.py --model gpt-4o
