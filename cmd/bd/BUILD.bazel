@@ -1122,6 +1122,7 @@ go_test(
         "uninstall_config_test.go",
         "uow_factory_server_mode_test.go",
         "uow_factory_test.go",
+        "update_add_label_shorthand_test.go",
         "update_claim_proxied_test.go",
         "update_close_policy_proxied_integration_test.go",
         "update_close_policy_test.go",
