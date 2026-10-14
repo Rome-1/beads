@@ -2,6 +2,7 @@ package schema
 
 import (
 	"context"
+	"errors"
 	"encoding/csv"
 	"fmt"
 	"os"
